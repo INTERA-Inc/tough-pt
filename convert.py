@@ -925,9 +925,11 @@ class Data():
 
     @property
     def perlen(self):
-        times = np.asarray(self.times) - self.initial_time
-        len_stp = np.diff(times, append=times[-1])
-        len_stp[-1] = 1.0
+        times = np.asarray(self.times) #- self.initial_time
+        # len_stp = np.diff(times, append=times[-1])
+        len_stp = np.diff(self.times)
+        len_stp = np.insert(len_stp, 0, times[0])
+        # len_stp[-1] = 1.0
         return len_stp
 
     @classmethod
@@ -1118,7 +1120,7 @@ class Data():
                 h = np.array((1,
                               kper + 1,
                               self.perlen[kper],
-                              self.times[kper] - self.initial_time,
+                              self.times[kper],
                               '           HEADU',
                               layer.nstrt + 1,
                               layer.nndlay + 1,
@@ -1303,7 +1305,7 @@ class Data():
                              1,                                  # IMETH (full budget array)
                              self.perlen[kper],                  # DELT
                              0.0,                                # PERTIM
-                             self.times[kper] - self.initial_time), dtype=dt)        # TOTIM
+                             self.times[kper]), dtype=dt)        # TOTIM
 
             h_st = np.array((1,                                  # KSTP
                              kper + 1,                           # KPER
@@ -1314,7 +1316,7 @@ class Data():
                              1,                                  # IMETH (full budget array)
                              self.perlen[kper],                  # DELT
                              0.0,                                # PERTIM
-                             self.times[kper] - self.initial_time), dtype=dt)        # TOTIM
+                             self.times[kper]), dtype=dt)        # TOTIM
 
             _, isrt_s = np.unique(self.state[kper]['INDEX'].to_numpy(dtype=np.int64), return_index=True)
             _, isrt_t = np.unique(self.transport[kper]['INDEX'].to_numpy(dtype=np.int64), return_index=True)
@@ -1438,7 +1440,7 @@ class Data():
                                5,                                  # IMETH (list w/auxiliary data)
                                self.perlen[kper],                  # DELT
                                0.0,                                # PERTIM
-                               self.times[kper] - self.initial_time), dtype=dt)        # TOTIM
+                               self.times[kper]), dtype=dt)        # TOTIM
 
             # Adding "WELLS" records for boundary connections and TOUGH sources/sinks
             well_data = np.array([], dtype=dtw)
@@ -1548,7 +1550,7 @@ class Data():
 
             for kstp, frac in enumerate(np.linspace(1.0/num_stp, 1.0, num_stp), start=1):
 
-                totim = self.times[kper] + frac*self.perlen[kper] - self.initial_time
+                totim = self.times[kper] + frac*self.perlen[kper]
                 pertim = (frac - 1.0/num_stp)*self.perlen[kper]
                 # Cell to cell flow:
                 h_ja = np.array((kstp,                               # KSTP
@@ -1853,7 +1855,8 @@ class Data():
 
         # idx.sort()
         idx = np.unique(np.array(idx)).tolist()
-        t_drop = np.array([86.0]) * 365.25 * 24.0 * 3600.0
+        # t_drop = np.array([86.0]) * 365.25 * 24.0 * 3600.0
+        t_drop = np.array([self.initial_time])
 
         ParticleCount = int(len(idx)*len(t_drop))
         loc_data += str(ParticleCount) + ' 1\n' # ParticleCount, ParticleIdOption (user-specified)
