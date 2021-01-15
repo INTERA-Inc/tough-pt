@@ -547,32 +547,48 @@ def get_interpolated_data(mesh_file=None, output_files=None, force_read_raw=Fals
 
     num_els = len(elems)
     num_cons = len(connections)
+    # state_data = [None]*len(times)
+    # transport_data = [None]*len(times)
     state_data = []
     transport_data = []
     gener_data = gener = incon = []
     eleme_data = elems.as_numpy_array()
     conne_data = connections.as_numpy_array()
-    transport_df = pd.DataFrame({'ELEM1':conne_data['name1'],
-                                 'ELEM2':conne_data['name2'],
-                                 'INDEX':(np.arange(num_cons)+1).tolist(),
-                                 'VEL(GAS)':np.zeros(num_cons),
-                                 'VEL(LIQ.)':np.zeros(num_cons)})
-    state_df = pd.DataFrame({'ELEM.':eleme_data['name'],
-                             'INDEX':(np.arange(num_els)+1).tolist(),
-                             'P':np.zeros(num_els),
-                             'T':np.zeros(num_els),
-                             'SG':np.zeros(num_els),
-                             'XHYDG':np.zeros(num_els),
-                             'XHYDL':np.zeros(num_els),
-                             'DG':np.zeros(num_els),
-                             'DL':np.zeros(num_els)})
 
-    for ix in i_srt: # MH edit, 5/13/2020
+
+    for kper, ix in enumerate(i_srt): # MH edit, 5/13/2020
+
+        transport_df = pd.DataFrame({'ELEM1':conne_data['name1'],
+                                     'ELEM2':conne_data['name2'],
+                                     'INDEX':(np.arange(num_cons)+1).tolist(),
+                                     'VEL(GAS)':np.zeros(num_cons),
+                                     'VEL(LIQ.)':np.zeros(num_cons)})
+        
+        state_df = pd.DataFrame({'ELEM.':eleme_data['name'],
+                                 'INDEX':(np.arange(num_els)+1).tolist(),
+                                 'P':np.zeros(num_els),
+                                 'T':np.zeros(num_els),
+                                 'SG':np.zeros(num_els),
+                                 'XHYDG':np.zeros(num_els),
+                                 'XHYDL':np.zeros(num_els),
+                                 'DG':np.zeros(num_els),
+                                 'DL':np.zeros(num_els)})
+
         fname = output_files[ix]
+        print(fname)
         all_data = pd.read_csv(fname, delim_whitespace=True)
         state_df['ELEM'] = all_data['Desc']
-        state_df.iloc[:,2:] = all_data.iloc[:,1:8]
+        state_df['P'] = all_data['P_(Pa)']
+        state_df['T'] = all_data['T_(deg-C)']
+        state_df['SG'] = all_data['Sg']
+        state_df['SL'] = 1.0 - all_data['Sg']
+        state_df['XHYDG'] = all_data['Xhydg']
+        state_df['XHYDL'] = all_data['Xhydl']
+        state_df['DG'] = all_data['Dg_(kg/m3)']
+        state_df['DL'] = all_data['Dl_(kg/m3)']
+        # state_data[kper] = state_df
         state_data.append(state_df)
+        del state_df
         print('Done with state data!')
 
         vel_file_data = all_data.iloc[:,-6:].to_numpy()
@@ -581,8 +597,8 @@ def get_interpolated_data(mesh_file=None, output_files=None, force_read_raw=Fals
         # Comb through all elements to update transport data:
         for i_el, elem in enumerate(elems):
 
-            if i_el % 10000 == 0:
-                print('On element ' + str(i_el+1) + ' of ' + str(num_els) + '.')
+            # if i_el % 10000 == 0:
+            #     print('On element ' + str(i_el+1) + ' of ' + str(num_els) + '.')
 
             # Store velocity data from file in easily accessible variables:
             vx_g = vel_file_data[i_el,0]
@@ -643,6 +659,8 @@ def get_interpolated_data(mesh_file=None, output_files=None, force_read_raw=Fals
 
         transport_df.iloc[:,3:] = vel_data
         transport_data.append(transport_df)
+        del transport_df
+        # transport_data[kper] = transport_df
         print('Done with transport data!')
         # gener_data.append(out.gener_dataframe_for_step(ix))
         # print('Done with source/sink data!')
@@ -951,6 +969,7 @@ class Data():
         times, elems, state, conns, trans, gener, geners, incon = (
             get_interpolated_data(mesh_file = mesh_file, output_files = output_files,
                                   force_read_raw = force_read_raw))
+
         return cls(times, elems, state, conns, trans, gener, geners, incon)
 
     @classmethod
@@ -2085,6 +2104,27 @@ if __name__ == '__main__':
     # data.geners = get_gener(in_file=gener_file)
     setattr(data, 'initial_time', 86.0*365.25*24.0*3600.0)
 
+    for kper in np.arange(len(data.times)):
+        print('Time: ' + str(data.times[kper]/(365.25*24.0*3600.0)))
+        print(data.state[kper])
+        print(data.transport[kper])
+    
+    # for ielem in np.arange(10, dtype=np.int32).tolist():
+    #     print('Looking at element {0}...'.format(data.state[kper]['ELEM.'].to_numpy(dtype='U5')[ielem]))
+    #     print('P_(Pa): {0}'.format(data.state[kper]['P'].to_numpy(dtype=np.float64)[ielem]))
+    #     print('T_(deg-C): {0}'.format(data.state[kper]['T'].to_numpy(dtype=np.float64)[ielem]))
+    #     print('Xhydl: {0}'.format(data.state[kper]['XHYDL'].to_numpy(dtype=np.float64)[ielem]))
+    #     print('\n')
+
+    # for icon in np.arange(10, dtype=np.int32).tolist():
+    #     print('Looking at connnection {0}...'.format(data.transport[kper]['INDEX'].to_numpy(dtype='U6')[icon]))
+    #     print('ELEM1: {0}'.format(data.transport[kper]['ELEM1'].to_numpy(dtype='U5')[icon]))
+    #     print('ELEM2: {0}'.format(data.transport[kper]['ELEM2'].to_numpy(dtype='U5')[icon]))
+    #     print('VEL(GAS): {0}'.format(data.transport[kper]['VEL(GAS)'].to_numpy(dtype=np.float64)[icon]))
+    #     print('VEL(LIQ.): {0}'.format(data.transport[kper]['VEL(LIQ.)'].to_numpy(dtype=np.float64)[icon]))
+    #     print('ISOT: {0}'.format(data.connections[icon].isot))
+    #     print('\n')
+    exit()
     hnoflo = 1.0e20
     hdry = 1.0e30
     N_p = 100000
