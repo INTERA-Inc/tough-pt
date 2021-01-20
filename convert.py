@@ -24,16 +24,17 @@ from tough_input import Gener, Mesh, Incon
 #from parse_mesh import Mesh
 from tough_output import OutputFile
 
-def mp7_to_mp5(basedir, modelname):
+def mp7_to_mp5(basedir, modelname, dx = 0.0, dy = 0.0, dz = 0.0):
+
+    from io import StringIO
 
     mp7_filename = os.path.join(basedir, modelname+'.mppth')
     mp5_filename = os.path.join(basedir, modelname+'5.mppth')
 
-    skiprows = 3
-    dt_h = np.dtype([('SequenceNumber', np.int32),
-                     ('Group', np.int32),
-                     ('ParticleID', np.int32),
-                     ('PathlinePointCount', np.int32)])
+    # dt_h = np.dtype([('SequenceNumber', np.int32),
+    #                  ('Group', np.int32),
+    #                  ('ParticleID', np.int32),
+    #                  ('PathlinePointCount', np.int32)])
 
     dt7 = np.dtype([('CellNumber', np.int32),
                     ('GlobalX', np.float32),
@@ -47,51 +48,122 @@ def mp7_to_mp5(basedir, modelname):
                     ('StressPeriod', np.int32),
                     ('TimeStep', np.int32), ])
 
-    dt5 = np.dtype([('ParticleID', np.int32),
+    dt5 = np.dtype([('ParticleID', np.int64),
                     ('GlobalX', np.float32),
-                    ('GlobalZ', np.float32),
-                    ('LocalZ', np.float32),
                     ('GlobalY', np.float32),
+                    ('LocalZ', np.float32),
+                    ('GlobalZ', np.float32),
                     ('TrackinTime', np.float32),
                     ('j', np.int32),
                     ('i', np.int32),
                     ('k', np.int32),
                     ('TimeStep', np.int32), ])
 
-    h_pth = np.loadtxt(mp7_filename, skiprows=skiprows, max_rows=1, dtype=dt_h)
-    data_pth5 = np.array([], dtype=dt5)
-
-    while h_pth.size > 0:
-
-        skiprows += 1
-        max_rows = h_pth['PathlinePointCount'].tolist()
-
-        data_pth = np.loadtxt(mp7_filename,
-                              skiprows=skiprows,
-                              max_rows=max_rows,
-                              dtype=dt7)
-
-        db_pth5 = np.empty((max_rows,), dtype=dt5)
-        db_pth5['ParticleID'] = h_pth['ParticleID']*np.ones(max_rows, dtype=np.int32)
-        db_pth5['GlobalX'] = data_pth['GlobalX']
-        db_pth5['GlobalY'] = data_pth['GlobalY']
-        db_pth5['LocalZ'] = data_pth['LocalZ']
-        db_pth5['GlobalZ'] = data_pth['GlobalZ']
-        db_pth5['TrackinTime'] = data_pth['TrackinTime']
-        db_pth5['j'] = data_pth['CellNumber']
-        db_pth5['i'] = np.ones(max_rows, dtype=np.int32)
-        db_pth5['k'] = data_pth['Layer']
-        db_pth5['TimeStep'] = data_pth['StressPeriod']
-
-        data_pth5 = np.append(data_pth5, db_pth5)
-
-        skiprows += max_rows
-        h_pth = np.loadtxt(mp7_filename, skiprows=skiprows, max_rows=1, dtype=dt_h)
-
+    # h_pth = np.loadtxt(mp7_filename, skiprows=skiprows, max_rows=1, dtype=dt_h)
     h_mp5 = '@ [ MODPATH 7.2.001 (TREF=   0.000000E+00 ) ]'
     fmt = ['%19u', '%27.15E', '%27.15E', '%19.7E', '%27.15E', '%27.15E',
            '%8u', '%8u', '%8u', '%9u']
-    np.savetxt(mp5_filename, data_pth5, fmt=fmt, header=h_mp5, delimiter=' ')
+
+
+    with open(mp5_filename, 'w') as f_out:
+
+        # Write MODPATH 5 header:
+        f_out.write(h_mp5 + '\n')
+
+    with open(mp5_filename, 'a') as f_out:
+
+        with open(mp7_filename, 'r') as f_in:
+
+            reached_header = False
+            reading_pts = False
+
+            # Read through MODPATH 7 pathline file line-by-line:
+            for line in f_in:
+
+                if not reached_header:
+                    # Reading through header lines
+                    if 'END HEADER' in line:
+                        # Reached the end of the header
+                        reached_header = True
+                        # Initialize particle-track data string
+                        pt_data = ''
+                    continue
+
+                if reading_pts:
+                    # Reading through particle track entries
+                    # Not finished yet, so add the next line to the particle data string
+                    pt_data += line if (i_track + 1) == num_entries else line + '\n'
+                    # Increment counter of tracks read
+                    i_track += 1
+                    if i_track == num_entries:
+                        # Reached end of particle track. Save data and move on to next one.
+                        # Convert data from data string to Numpy ndarray:
+                        pt7_data = np.loadtxt(StringIO(pt_data), dtype=dt7)
+                        # Create another Numpy ndarray in MODPATH 5 style dtype
+                        pt5_data = np.empty(num_entries, dtype=dt5)
+                        pt5_data['ParticleID'] = particleID * np.ones(num_entries, dtype=np.int32)
+                        pt5_data['GlobalX'] = pt7_data['GlobalX'] + dx
+                        pt5_data['GlobalY'] = pt7_data['GlobalY'] + dy
+                        pt5_data['LocalZ'] = pt7_data['LocalZ']
+                        pt5_data['GlobalZ'] = pt7_data['GlobalZ'] + dz
+                        pt5_data['TrackinTime'] = pt7_data['TrackinTime']
+                        pt5_data['j'] = pt7_data['CellNumber']
+                        pt5_data['i'] = np.ones(num_entries, dtype=np.int32)
+                        pt5_data['k'] = pt7_data['Layer']
+                        pt5_data['TimeStep'] = pt7_data['StressPeriod']
+                        # Append data from this particle track to end of output file
+                        np.savetxt(f_out, pt5_data, fmt=fmt, delimiter=' ')
+                        if particleID % 1000 == 0:
+                            print('Saved track data from particle ' + str(particleID))
+                        # Reset particle-track data string and flag to read next particle-track header
+                        pt_data = ''
+                        reading_pts = False
+                else:
+                    # At the beginning of the entries for next particle.
+                    particle_info = line.split()
+                    # Read particle ID and number of entries for it
+                    particleID = int(particle_info[0])
+                    num_entries = int(particle_info[-1])
+                    # Reset data string, counter for number of tracks read
+                    pt_data = ''
+                    i_track = 0
+                    # Set flag to initiate next round of track reads
+                    reading_pts = True
+
+   #      f.write(h_mp5)
+   #      f.write('\n')
+
+   #      while h_pth.size > 0:
+
+   #          print('Written ' + str(h_pth['ParticleID']-1) + ' particle entries to file.')
+
+   #          skiprows += 1
+   #          max_rows = h_pth['PathlinePointCount'].tolist()
+   #          data_pth = np.loadtxt(mp7_filename,
+   #                                skiprows=skiprows,
+   #                                max_rows=max_rows,
+   #                                dtype=dt7)
+
+   #          data_pth5 = np.empty((max_rows,), dtype=dt5)
+   #          data_pth5['ParticleID'] = h_pth['ParticleID']*np.ones(max_rows, dtype=np.int32)
+   #          data_pth5['GlobalX'] = data_pth['GlobalX'] + dx
+   #          data_pth5['GlobalY'] = data_pth['GlobalY'] + dy
+   #          data_pth5['LocalZ'] = data_pth['LocalZ']
+   #          data_pth5['GlobalZ'] = data_pth['GlobalZ'] + dz
+   #          data_pth5['TrackinTime'] = data_pth['TrackinTime']
+   #          data_pth5['j'] = data_pth['CellNumber']
+   #          data_pth5['i'] = np.ones(max_rows, dtype=np.int32)
+   #          data_pth5['k'] = data_pth['Layer']
+   #          data_pth5['TimeStep'] = data_pth['StressPeriod']
+
+   #          np.savetxt(f, data_pth5, fmt=fmt, delimiter=' ')
+   #          # del db_pth5
+   #          # data_pth5 = np.concatenate((data_pth5, db_pth5))
+
+   #          skiprows += max_rows
+   #          h_pth = np.loadtxt(mp7_filename, skiprows=skiprows, max_rows=1, dtype=dt_h)
+
+   #  # np.savetxt(mp5_filename, data_pth5, fmt=fmt, header=h_mp5, delimiter=' ')
 
     return None
 
@@ -591,9 +663,9 @@ def get_interpolated_data(mesh_file=None, output_files=None, force_read_raw=Fals
         del state_df
         print('Done with state data!')
 
-        vel_file_data = all_data.iloc[:,-6:].to_numpy()
+        vel_file_data = all_data.iloc[:, -6:].to_numpy()
         # Initialize velocity data in current data frame to 0.0:
-        vel_data = np.zeros((num_cons,2))
+        vel_data = np.zeros((num_cons, 2))
         # Comb through all elements to update transport data:
         for i_el, elem in enumerate(elems):
 
@@ -601,12 +673,12 @@ def get_interpolated_data(mesh_file=None, output_files=None, force_read_raw=Fals
             #     print('On element ' + str(i_el+1) + ' of ' + str(num_els) + '.')
 
             # Store velocity data from file in easily accessible variables:
-            vx_g = vel_file_data[i_el,0]
-            vy_g = vel_file_data[i_el,1]
-            vz_g = vel_file_data[i_el,2]
-            vx_l = vel_file_data[i_el,3]
-            vy_l = vel_file_data[i_el,4]
-            vz_l = vel_file_data[i_el,5]
+            vx_g = vel_file_data[i_el, 0]
+            vy_g = vel_file_data[i_el, 1]
+            vz_g = vel_file_data[i_el, 2]
+            vx_l = vel_file_data[i_el, 3]
+            vy_l = vel_file_data[i_el, 4]
+            vz_l = vel_file_data[i_el, 5]
 
             # Comb through all connections of current element
             for i_con_el, i_conn, is_n1 in zip(elem.connected_elements, elem.connections, elem.is_n1):
@@ -621,13 +693,14 @@ def get_interpolated_data(mesh_file=None, output_files=None, force_read_raw=Fals
                     if vx_g != 0.0:
                         if (vx_g > 0.0 and pos_x) or (vx_g < 0.0 and not pos_x):
                             # Velocity in pos./neg. x direction and connected element is at higher/lower x coordinate.
-                            vel_data[i_conn,0] = -vx_g if is_n1 else vx_g
+                            # Velocity is going from current element to connected element:
+                            vel_data[i_conn, 0] = -vx_g if is_n1 else vx_g
 
                     # Liquid velocity:
                     if vx_l != 0.0:
                         if (vx_l > 0.0 and pos_x) or (vx_l < 0.0 and not pos_x):
                             # Velocity in pos./neg. x direction and connected element is at higher/lower x coordinate.
-                            vel_data[i_conn,1] = -vx_l if is_n1 else vx_l
+                            vel_data[i_conn, 1] = -vx_l if is_n1 else vx_l
 
                 elif conn_isot == 2:
                     # Connection in y-direction
@@ -636,12 +709,12 @@ def get_interpolated_data(mesh_file=None, output_files=None, force_read_raw=Fals
                     if vy_g != 0.0:
                         if (vy_g > 0.0 and pos_y) or (vy_g < 0.0 and not pos_y):
                             # Velocity in pos./neg. y direction and connected element is at higher/lower y coordinate.
-                            vel_data[i_conn,0] = -vy_g if is_n1 else vy_g
+                            vel_data[i_conn, 0] = vy_g if is_n1 else -vy_g
                     # Liquid velocity:
                     if vy_l != 0.0:
                         if (vy_l > 0.0 and pos_y) or (vy_l < 0.0 and not pos_y):
                             # Velocity in pos./neg. y direction and connected element is at higher/lower y coordinate.
-                            vel_data[i_conn,1] = -vy_l if is_n1 else vy_l
+                            vel_data[i_conn, 1] = vy_l if is_n1 else -vy_l
 
                 elif conn_isot == 3:
                     # Connection in z-direction
@@ -1357,7 +1430,8 @@ class Data():
             v_data = np.empty(len(vg_data), dtype=np.float64)
             # v_data[ifg] = vg_data[ifg]
             v_data[ifg] = vg_data[ifg]
-            v_data[ifl] = vl_data[ifl]
+            # v_data[ifl] = vl_data[ifl] MH Changed this for a quick test 1/20/21
+            v_data[ifl] = vg_data[ifl]
 
             xg_array = self.state[kper]['XHYDG'].to_numpy(dtype=np.float32)[isrt_s][self.m2t]
             xl_array = self.state[kper]['XHYDL'].to_numpy(dtype=np.float32)[isrt_s][self.m2t]
@@ -1376,10 +1450,11 @@ class Data():
             x1_data = np.empty(len(xg1_data), dtype=np.float64)
             x2_data = np.empty(len(xg2_data), dtype=np.float64)
             x1_data[ifg] = xg1_data[ifg]
-            x1_data[ifl] = xl1_data[ifl]
+            # x1_data[ifl] = xl1_data[ifl] MH Changed this for a quick test 1/20/21
+            x1_data[ifl] = xg1_data[ifl]
             x2_data[ifg] = xg2_data[ifg]
-            x2_data[ifl] = xl2_data[ifl]
-
+            # x2_data[ifl] = xl2_data[ifl] MH Changed this for a quick test 1/20/21
+            x2_data[ifl] = xg2_data[ifl]
             # x1_data = xl_array[el1_data]
             # x2_data = xl_array[el2_data]
 
@@ -1427,6 +1502,7 @@ class Data():
                 ja_flow[ijag] = 0.0
                 ija = np.arange(ijag,ijag+len(elem.connections))+1
                 vd = v_data[elem.connections]
+                # TOUGH and MODFLOW-USG velocities are positive if from ELEM2 into ELEM1
                 vd[np.logical_not(elem.is_n1)] *= -1.0
                 # Multiply by mass fraction:
                 # vd[abs(vd) < vmin] = vmin
@@ -1875,7 +1951,8 @@ class Data():
         # idx.sort()
         idx = np.unique(np.array(idx)).tolist()
         # t_drop = np.array([86.0]) * 365.25 * 24.0 * 3600.0
-        t_drop = np.array([self.initial_time])
+        t2 = 5000.0*365.25*24.0*3600.0
+        t_drop = np.array([self.initial_time, t2])
 
         ParticleCount = int(len(idx)*len(t_drop))
         loc_data += str(ParticleCount) + ' 1\n' # ParticleCount, ParticleIdOption (user-specified)
@@ -1986,7 +2063,7 @@ class Data():
             i_src = []
             for el_name in el_names:
                 i_src.append(self.name2idx[el_name])
-            # i_srt = np.argsort(i_src)
+            i_srt = np.argsort(i_src)
             # i_src = np.array(i_src)[i_srt].tolist()
 
             for gen_rate, CellNumber in zip(self.gener[k_t]['GENERATION RATE'].to_numpy(dtype=np.float64)[i_srt],
@@ -2089,7 +2166,7 @@ if __name__ == '__main__':
     incon_file = os.path.join(pdir, base_file + '.incon')
     modelname = 'mp_' + base_file
 
-    # mp7_to_mp5(base_dir, modelname); exit()
+    mp7_to_mp5(base_dir, modelname, dx=-516.0, dy=786.0); exit()
 
     try:
         data = Data.from_pickle(data_pckfile)
@@ -2097,34 +2174,13 @@ if __name__ == '__main__':
     except Exception as e:
         # raise(e)
         # data = Data.from_disk(mesh_file=mesh_file, out_file=out_file, gener_file=gener_file, incon_file=incon_file)
-        data = Data.from_disk_interpolated(mesh_file = mesh_file, output_files = out_files)
+        data = Data.from_disk_interpolated(mesh_file=mesh_file, output_files=out_files)
         data.to_pickle(data_pckfile)
         print('Pickled the data file')
 
     # data.geners = get_gener(in_file=gener_file)
     setattr(data, 'initial_time', 86.0*365.25*24.0*3600.0)
 
-    for kper in np.arange(len(data.times)):
-        print('Time: ' + str(data.times[kper]/(365.25*24.0*3600.0)))
-        print(data.state[kper])
-        print(data.transport[kper])
-    
-    # for ielem in np.arange(10, dtype=np.int32).tolist():
-    #     print('Looking at element {0}...'.format(data.state[kper]['ELEM.'].to_numpy(dtype='U5')[ielem]))
-    #     print('P_(Pa): {0}'.format(data.state[kper]['P'].to_numpy(dtype=np.float64)[ielem]))
-    #     print('T_(deg-C): {0}'.format(data.state[kper]['T'].to_numpy(dtype=np.float64)[ielem]))
-    #     print('Xhydl: {0}'.format(data.state[kper]['XHYDL'].to_numpy(dtype=np.float64)[ielem]))
-    #     print('\n')
-
-    # for icon in np.arange(10, dtype=np.int32).tolist():
-    #     print('Looking at connnection {0}...'.format(data.transport[kper]['INDEX'].to_numpy(dtype='U6')[icon]))
-    #     print('ELEM1: {0}'.format(data.transport[kper]['ELEM1'].to_numpy(dtype='U5')[icon]))
-    #     print('ELEM2: {0}'.format(data.transport[kper]['ELEM2'].to_numpy(dtype='U5')[icon]))
-    #     print('VEL(GAS): {0}'.format(data.transport[kper]['VEL(GAS)'].to_numpy(dtype=np.float64)[icon]))
-    #     print('VEL(LIQ.): {0}'.format(data.transport[kper]['VEL(LIQ.)'].to_numpy(dtype=np.float64)[icon]))
-    #     print('ISOT: {0}'.format(data.connections[icon].isot))
-    #     print('\n')
-    exit()
     hnoflo = 1.0e20
     hdry = 1.0e30
     N_p = 100000
@@ -2137,24 +2193,24 @@ if __name__ == '__main__':
     # read_mpend(base_dir, modelname, m_p = m_p); exit()
     # print(m_p)
     # print(ParticleId)
-    print('Writing DISU file...')
-    disu, _ = data.build_disu(base_dir, modelname)
-    print('Writing Grid Meta...')
-    data.build_gridmeta(base_dir, modelname)
+    # print('Writing DISU file...')
+    # disu, _ = data.build_disu(base_dir, modelname)
+    # print('Writing Grid Meta...')
+    # data.build_gridmeta(base_dir, modelname)
     print('Writing heads file for MODPATH...')
     data.build_hds(base_dir, modelname, hdry=0.5*hdry)
     print('Writing budget file for MODPATH...')
     data.build_budget(base_dir, modelname, area=None)
     # data.build_hds2(base_dir, modelname, hdry=0.5*hdry, num_stp=num_stp)
     # data.build_budget2(base_dir, modelname, area=disu.fahl, num_stp=num_stp)
-    print('Writing locations file...')
-    data.build_loc(base_dir, modelname)
-    # locs_file = 'gv1_test_polygons_loc4.csv'
-    # data.build_loc_file(base_dir, modelname, locs_file)
-    print('Writing mpbas...')
-    data.build_mpbas(base_dir, modelname, hdry=hdry, hnoflo=hnoflo)
-    print('Writing mpsim...')
-    data.build_mpsim(base_dir, modelname, SimulationType=2)
+    # print('Writing locations file...')
+    # data.build_loc(base_dir, modelname)
+    # # locs_file = 'gv1_test_polygons_loc4.csv'
+    # # data.build_loc_file(base_dir, modelname, locs_file)
+    # print('Writing mpbas...')
+    # data.build_mpbas(base_dir, modelname, hdry=hdry, hnoflo=hnoflo)
+    # print('Writing mpsim...')
+    # data.build_mpsim(base_dir, modelname, SimulationType=2)
     #
     # Run the model:
     # os.system('mp7 ' + modelname + '.mpsim')
